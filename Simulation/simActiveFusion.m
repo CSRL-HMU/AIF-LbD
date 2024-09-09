@@ -25,11 +25,12 @@ M = 40;
 alpha = 4;
 beta = 1;
 W = zeros(M,2);
-ka = 12000.0;
+ka = 400.0;
 sigma1 = 0.8;
 sigma2 = 0.03;
 Sigma0 = diag([sigma1^2 ,sigma2^2]);
-enU = false;
+enU = true;
+online_figs =false;
 
 %% Initial and target position for the DMP
 pT = pd(:,end);
@@ -50,9 +51,9 @@ for i=1:10 %% for each repetition
     
 
     %% Initialize the sensor position and orientation
-    pp = [3;0]+rand(2,1)*0.1;
+    pp = [3;0]+enU*[0;(i-1)*0.1];
     thetap = atan2(pc(2)-pp(2), pc(1)-pp(1));
-    thetap=thetap +(i-1)*pi/18;
+    thetap=thetap ;
     sensor_state = [pp ; thetap];
     vp = [0; 0; 0];
    
@@ -106,7 +107,7 @@ for i=1:10 %% for each repetition
         %% Get measurement
         % w.r.t. the sensor frame
         % Simulate noise from t=4s to t=4.5s
-        if(t(k)>2 && t(k)<7)
+        if(t(k)>3.0 && t(k)<3.5)
             if mod(k,40)==30
                 noise = epsilon_p;
             end
@@ -123,7 +124,7 @@ for i=1:10 %% for each repetition
         [xretv3, xretv1, xretv2] = dmpx.get_state_dot(xpred_k(5), xpred_k(1), xpred_k(3), false, 1);
         [yretv3, yretv1, yretv2] = dmpy.get_state_dot(xpred_k(5), xpred_k(2), xpred_k(4), false, 1);
     
-        state_dot = [xretv1 ; yretv1 ; xretv2 ; yretv2 ; xretv3]
+        state_dot = [xretv1 ; yretv1 ; xretv2 ; yretv2 ; xretv3];
         xpred_k = xpred_k + state_dot*dt;
 
         % COVARIANCE WEIGHTED MEAN
@@ -177,7 +178,7 @@ for i=1:10 %% for each repetition
         vp_log(:,k) = vp;
         detP_log(k) = detP;
 
-        if(mod(k,100)==0)
+        if(mod(k,100)==0 && online_figs)
             %%plots 
             figure(1)
             hold off
@@ -253,9 +254,12 @@ for i=1:10 %% for each repetition
     end
 
     figure(100)
-    plot(t,xst_log(2,:))
+    plot(t,xst_log(2,:),'b-')
     hold on
-    plot(t,yst_log(2,:))
+    plot(t,pd(1,:),'b--')
+    plot(t,yst_log(2,:),'r-')
+    plot(t,pd(2,:),'r--')
+    
 
     figure()
     plot(pmeas_log(1,:),pmeas_log(2,:),'g-')
@@ -265,8 +269,9 @@ for i=1:10 %% for each repetition
     plot(pd(1,:),pd(2,:),LineWidth=2)
     plot(pd(1,1),pd(2,1),'x-',LineWidth=2,MarkerSize=5)
     plot(pd(1,end),pd(2,end),'o-',LineWidth=2,MarkerSize=5)
+    plot(sensor_state_log(1,:),sensor_state_log(2,:),'r:')
     
-    for j=1:800:N
+    for j=1:4000:N
         
         S_now = squeeze(Sigma_log(j,:,:));
         P_now = squeeze(Pk(j,:,:));
