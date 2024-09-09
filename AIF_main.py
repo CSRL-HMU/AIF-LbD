@@ -338,16 +338,21 @@ for i in range(2):
         
     # END OF WITH
     
-
+    # Stop velocity control 
     rtde_c.speedStop()
 
+    # make a sound (beep)
     beep = lambda x: os.system("echo -n '\a';sleep 0.015;" * x)
     beep(5)
    
+    # Re-set the target
     pT = p_hat
+
+    # Train the DMP model
     dmp_model.set_goal(pT)
     dmp_model.train(dt, p_hat_iter, plotPerformance = True)
 
+    # write the log files
     data = {'p_hat_iter': p_hat_iter, 'qp_iter': qp_iter, 'pp_iter': pp_iter, 't': tlog, 'P': P, 'Q': Q, 'Sigma_log':Sigma_log}
     scio.savemat('Logging_' + str(data_id) + '_' + str(i) + '.mat', data)
 
