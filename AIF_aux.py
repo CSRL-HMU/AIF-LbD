@@ -1,7 +1,6 @@
 import numpy as np
-import sys, termios, tty
+import sys
 import select
-import fcntl
 import camera_class
 import threading
 from CSRL_orientation import *
@@ -12,23 +11,24 @@ tracker = camera_class.HandTracker()
 tracker.start_tracking()
 # Get initial configuration
 
-# This is a function for getting asynchronously a key from the keyboard
-class NonBlockingConsole(object):
+# # This is a function for getting asynchronously a key from the keyboard
+# class NonBlockingConsole(object):
+#
+#     keyFlag = False
+#
+#     def __enter__(self):
+#         self.old_settings = termios.tcgetattr(sys.stdin)
+#         tty.setcbreak(sys.stdin.fileno())
+#         return self
+#
+#     def __exit__(self, type, value, traceback):
+#         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
+#     def get_data(self):
+#         if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+#             return sys.stdin.read(1)
+#
+#         return False
 
-    keyFlag = False
-
-    def __enter__(self):
-        self.old_settings = termios.tcgetattr(sys.stdin)
-        tty.setcbreak(sys.stdin.fileno())
-        return self
-
-    def __exit__(self, type, value, traceback):
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
-    def get_data(self):
-        if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
-            return sys.stdin.read(1)
-
-        return False
 
 # this returns the finger position estimate from the camera
 def get_pcf(firstTime, pcf_filtered):
@@ -44,12 +44,23 @@ def get_pcf(firstTime, pcf_filtered):
 
         # if this the first time, initialize the state of the filter
         if firstTime:
-            pcf_hat = np.array(fingertips3d_result[0])
+            ptemp = np.array([fingertips3d_result[0]["index_tip"].x, fingertips3d_result[0]["index_tip"].y,
+                          fingertips3d_result[0]["depth"]])
+            ptemp[0] = ptemp[0] * tracker.frame_width
+            ptemp[1] = ptemp[1] * tracker.frame_height
+
+            pcf_hat = tracker.ph.back_project(ptemp[0:2], ptemp[2])
+
             pcf_filtered = pcf_hat
 
         # If the finger is within a cylinder of 0.1m around the center (z-axis)
         if np.array(fingertips3d_result[0])[0]**2 + np.array(fingertips3d_result[0])[1]**2 < 0.3**2:
-            pcf_hat = np.array(fingertips3d_result[0])
+            ptemp = np.array([fingertips3d_result[0]["index_tip"].x, fingertips3d_result[0]["index_tip"].y,
+                              fingertips3d_result[0]["depth"]])
+            ptemp[0] = ptemp[0] * tracker.frame_width
+            ptemp[1] = ptemp[1] * tracker.frame_height
+
+            pcf_hat = tracker.ph.back_project(ptemp[0:2], ptemp[2])
             firstTime = False
         else:
             print("[get_pcf] Out of cylinder !!!!!!!!!!!!")
@@ -58,6 +69,7 @@ def get_pcf(firstTime, pcf_filtered):
         pcf_filtered = filter_pole * pcf_hat + (1 - filter_pole) * pcf_filtered
 
     return firstTime, pcf_hat, pcf_filtered
+
 
 # this returns the robot's pose
 def get_robot_pose(ur, q):
@@ -73,8 +85,9 @@ def get_robot_pose(ur, q):
     print('p0e=', p0e)
 
     # this is the pose of the camera with respec to the end-effector frame
-    Rec = rotZ(pi/2)
-    pec = np.array([0, -0.0325, 0.123])
+    #Rec = rotZ(pi/2)
+    Rec = np.identity(3)
+    pec = np.array([-0.062, -0.025, 0.043 + 0.032])
     # pec = np.array([0.123, 0, 0])
 
 
@@ -83,6 +96,7 @@ def get_robot_pose(ur, q):
     p0c = p0e + R0e @ pec
 
     return R0c, p0c
+
 
 # this returns the robot's pose
 def get_robot_UR_pose(rtde_r, ur):
@@ -102,7 +116,7 @@ def get_robot_UR_pose(rtde_r, ur):
     # get rotation matrix
     R0e = np.array(g.R)
     # this is the pose of the camera with respec to the end-effector frame
-    Rec = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]])
+    Rec = np.identity(3)
     # pec = np.array([0.123, 0, 0])
     # compute the pose of the camera with respect to the inertial frame
     R0c = R0e @ Rec
@@ -124,7 +138,7 @@ def get_jacobian(ur, q):
     p0e = np.array(g.t)
     R0e = np.array(g.R)
 
-    pec = np.array([0, -0.0325, 0.123])
+    pec = np.array([-0.062, -0.025, 0.043 + 0.032])
     p0c = p0e + R0e @ pec
 
     pce = p0e - p0c
@@ -135,6 +149,8 @@ def get_jacobian(ur, q):
     J = GammaCE @ J
 
     return J
+
+
 
 def calculate_dR_d(q, choice):
     if choice < 0 or choice > 3:

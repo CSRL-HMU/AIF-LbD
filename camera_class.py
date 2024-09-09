@@ -25,11 +25,11 @@ class HandTracker:
         self.mat = sl.Mat()
         self.depth = sl.Mat()
 
-        # ZED camera intrinsic parameters 
-        fx = 700.819
-        fy = 700.819
-        cx = 665.465
-        cy = 371.953
+        # ZED camera intrinsic parameters
+        fx = 533.895
+        fy = 534.07
+        cx = 632.69
+        cy = 379.6325
 
         size_x = self.frame_width
         size_y = self.frame_height
@@ -44,7 +44,7 @@ class HandTracker:
 
         self.yolo = YOLO("yolov8n.pt")  # Load YOLO model
         self.detections = []
-        self.target_class = "apple"  # Specify the target class
+        self.target_class = "chair"  # Specify the target class
 
         self.tracking_thread = threading.Thread(target=self._tracking_loop)
         self.lock = threading.Lock()
@@ -73,7 +73,7 @@ class HandTracker:
         elif frame.shape[2] == 1:
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         
-        results = self.yolo(frame)
+        results = self.yolo(frame,verbose=False)
         self.detections = results  # Get detections
 
     def detect_hands(self, frame):
@@ -103,7 +103,7 @@ class HandTracker:
                 class_id = int(box.cls[0].cpu().numpy())  # Class ID of the detected object
                 class_name = detection.names[class_id]  # Get class name from YOLO model
 
-                print(f"Detected class: {class_name}, Target class: {self.target_class}")  # Debugging information
+                #print(f"Detected class: {class_name}, Target class: {self.target_class}")  # Debugging information
 
                 if class_name != self.target_class:
                     continue
@@ -138,11 +138,16 @@ class HandTracker:
     def draw_hands(self, frame, hand_results):
         # Draw MediaPipe hand landmarks
         if hand_results.multi_hand_landmarks:
+            # print('test1')
             for hand_landmarks in hand_results.multi_hand_landmarks:
+                # print('test2')
                 for landmark in hand_landmarks.landmark:
+                    # print('test3')
                     x = int(landmark.x * frame.shape[1])
                     y = int(landmark.y * frame.shape[0])
+                    # print('test4')
                     cv2.circle(frame, (x, y), 5, (0, 0, 255), -1)
+                    # print('test5')
 
     def _tracking_loop(self):
         while self.is_tracking:
@@ -159,10 +164,13 @@ class HandTracker:
 
                 # Draw detections on frame
                 self.draw_detections(frame)
+
                 self.draw_hands(frame, hand_results)
 
                 if hand_results.multi_hand_landmarks:
+                    # print('test6')
                     with self.lock:
+                    # print('test7')
                         self.fingertips3d = [
                             {
                                 "index_tip": hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP],
@@ -186,6 +194,30 @@ class HandTracker:
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
+
+
+    # [LEFT_CAM_HD]
+    # fx=533.895
+    # fy=534.07
+    # cx=632.69
+    # cy=379.6325
+    # k1=-0.0489421
+    # k2=0.0208547
+    # p1=0.000261529
+    # p2=-0.000580449
+    # k3=-0.00836067
+    #
+    # [RIGHT_CAM_HD]
+    # fx=532.225
+    # fy=532.47
+    # cx=645.515
+    # cy=362.0185
+    # k1=-0.0463267
+    # k2=0.0195163
+    # p1=0.000313832
+    # p2=-8.13248e-05
+    # k3=-0.00854262
+
     # Example usage:
     tracker = HandTracker()
     tracker.start_tracking()
@@ -194,12 +226,24 @@ if __name__ == "__main__":
     time.sleep(1)
 
     while True:
-        start_time = time.time()
-        with tracker.lock:
-            fingertips3d_result = tracker.get_fingertips3d()
-        loop_time = time.time() - start_time
+        # print('ttttest1')
+        # swith tracker.lock:tart_time = time.time()
 
-        print("Fingertips 3D:", fingertips3d_result)
+            # print('Test!')
+        fingertips3d_result = tracker.get_fingertips3d()
+        if fingertips3d_result:
+            p = np.array([fingertips3d_result[0]["index_tip"].x, fingertips3d_result[0]["index_tip"].y, fingertips3d_result[0]["depth"]])
+            p[0] = p[0] * tracker.frame_width
+            p[1] = p[1] * tracker.frame_height
+
+            pp = tracker.ph.back_project(p[0:2],p[2])
+            print(pp)
+
+        # print('ttttest2')
+
+        # loop_time = time.time() - start_time
+
+        # print("Fingertips 3D:", fingertips3d_result)
         #print(f'loop time: {loop_time}')
         time.sleep(1)
 

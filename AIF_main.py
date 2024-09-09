@@ -1,3 +1,4 @@
+import msvcrt
 import roboticstoolbox as rt
 import numpy as np
 import scipy.io as scio
@@ -11,12 +12,12 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import math
 import time
-import camera_class
 from CSRL_orientation import *
 from AIF_aux import *
 import threading
 from scipy.spatial.distance import euclidean
 from dmpR3 import *
+import camera_class
 
 # Declare math pi
 pi = math.pi
@@ -224,120 +225,117 @@ for i in range(2):
     k = 0
 
     # this is for accepting commands from keyboard
-    with NonBlockingConsole() as nbc:
+    # with NonBlockingConsole() as nbc:
 
-        # while the reference index is less that the size of the reference time array
-        while k < Nk:     # CONTROL LOOP
+    # while the reference index is less that the size of the reference time array
+    while k < Nk:     # CONTROL LOOP
 
-            # Start control loop - synchronization with the UR
-            t_start = rtde_c.initPeriod()
+        # Start control loop - synchronization with the UR
+        t_start = rtde_c.initPeriod()
 
-            # Integrate time
-            t = t + dt
+        # Integrate time
+        t = t + dt
 
-            # Get joint values
-            q = np.array(rtde_r.getActualQ())
+        # Get joint values
+        q = np.array(rtde_r.getActualQ())
 
-            # get state
-            Rp, pp = get_robot_pose(ur, q)
+        # get state
+        Rp, pp = get_robot_pose(ur, q)
 
-            # initialize v_p
-            v_p = np.zeros(6)
-        
-
-            # get the current estimation of the finger
-            firstTime, pcf_hat, pcf_filtered = get_pcf(firstTime, pcf_filtered)
-            p_hat = pp + Rp @ pcf_filtered
-            
-            # initialize DMP state 
-            if k == 0:
-                x1 = p_hat
-                dmp_model.set_init_state(x1)
+        # initialize v_p
+        v_p = np.zeros(6)
 
 
-            # get the Jacobian
-            J = get_jacobian(ur, q)
+        # get the current estimation of the finger
+        firstTime, pcf_hat, pcf_filtered = get_pcf(firstTime, pcf_filtered)
+        p_hat = pp + Rp @ pcf_filtered
 
-            # shape arrays before stacking them
-            p_hat.shape = (3, 1)
-            pp.shape = (3, 1)
-            Rp.shape = (3, 3)
-            qp = rot2quat(Rp)
-            qp.shape = (4, 1)
+        # initialize DMP state
+        if k == 0:
+            x1 = p_hat
+            dmp_model.set_init_state(x1)
 
 
-            # log time
-            tlog = np.vstack((tlog, t))
+        # get the Jacobian
+        J = get_jacobian(ur, q)
 
-            # compute Sigma now
-            Sigma_now = Rp @ Sigma_0 @ Rp.T
-            Sigma_inv = np.linalg.inv(Sigma_now)
+        # shape arrays before stacking them
+        p_hat.shape = (3, 1)
+        pp.shape = (3, 1)
+        Rp.shape = (3, 3)
+        qp = rot2quat(Rp)
+        qp.shape = (4, 1)
 
-            # log Sigma 
-            Sigma_log[0:3, k*3:k*3+3] = Sigma_now
 
-            # get modelling uncertainty,i.e. Q 
-            Q_now = Q[0:3, k*3:k*3+3]
-            Q_inv = np.linalg.inv(Q_now)
+        # log time
+        tlog = np.vstack((tlog, t))
 
-            # State dot prediction though DMP
-            z_dot, p_dot, p_2dot = dmp_model.get_state_dot(x3 , x1, x2)
+        # compute Sigma now
+        Sigma_now = Rp @ Sigma_0 @ Rp.T
+        Sigma_inv = np.linalg.inv(Sigma_now)
 
-            # state integration
-            x1 = x1 + p_dot * dt
-            x2 = x2 + p_2dot * dt
-            x3 = x3 + z_dot * dt
+        # log Sigma
+        Sigma_log[0:3, k*3:k*3+3] = Sigma_now
 
-            # Weighted Mean Data Fusion and its covariance
-            P[0:3, k*3:k*3+3] = np.linalg.inv( Q_inv + Sigma_inv )
-            pstar = P[0:3, k*3:k*3+3] @ ( Q_inv @ x1 + Sigma_inv @ p_hat )
-            
-            # stack data array
-            p_hat_iter = np.hstack((p_hat_iter, np.array(p_hat)))
-            qp_iter = np.hstack((qp_iter, qp))
-            pp_iter = np.hstack((pp_iter, np.array(pp)))
-          
-            ## ACtive perception signal
-            detP = np.linalg.det(P[0:3, k*3:k*3+3])
-            invP = np.linalg.inv(P[0:3, k*3:k*3+3])
-            Jq = getJq(qp)
-            Spp = skewSymmetric(pc-pp)
+        # get modelling uncertainty,i.e. Q
+        Q_now = Q[0:3, k*3:k*3+3]
+        Q_inv = np.linalg.inv(Q_now)
 
-            A = P[0:3, k*3:k*3+3] @ P[0:3, k*3:k*3+3] @ Sigma_inv @ Sigma_inv
-            
-            ddet_dq = np.zeros(4)
-            for j in range (4):
-                dR_dqi = calculate_dR_d(qp, j)
-                dSigma_dqi = dR_dqi @ Sigma_now @ np.transpose(Rp) + Rp @  Sigma_now @ np.transpose(dR_dqi)
-                dP_dqi = A @ dSigma_dqi
-                ddet_dq[j] = detP @ np.trace( invP @ dP_dqi )
+        # State dot prediction though DMP
+        z_dot, p_dot, p_2dot = dmp_model.get_state_dot(x3 , x1, x2)
 
-            v_p[0:3] = - ka * Spp @ np.transpose(Jq) @ ddet_dq
-            v_p[3:6] = - ka * np.transpose(Jq) @ ddet_dq
+        # state integration
+        x1 = x1 + p_dot * dt
+        x2 = x2 + p_2dot * dt
+        x3 = x3 + z_dot * dt
 
-            # Inverse kinematics mapping with siongularity avoidance
-            qdot = np.linalg.pinv(J, 0.1) @ ( v_p )
+        # Weighted Mean Data Fusion and its covariance
+        P[0:3, k*3:k*3+3] = np.linalg.inv( Q_inv + Sigma_inv )
+        pstar = P[0:3, k*3:k*3+3] @ ( Q_inv @ x1 + Sigma_inv @ p_hat )
 
-            # if the key a is pushed
-            if nbc.get_data() == 'a':  # x1b is ESC
-            
-                # set the length of the dataset
+        # stack data array
+        p_hat_iter = np.hstack((p_hat_iter, np.array(p_hat)))
+        qp_iter = np.hstack((qp_iter, qp))
+        pp_iter = np.hstack((pp_iter, np.array(pp)))
+
+        ## ACtive perception signal
+        detP = np.linalg.det(P[0:3, k*3:k*3+3])
+        invP = np.linalg.inv(P[0:3, k*3:k*3+3])
+        Jq = getJq(qp)
+        Spp = skewSymmetric(pc-pp)
+
+        A = P[0:3, k*3:k*3+3] @ P[0:3, k*3:k*3+3] @ Sigma_inv @ Sigma_inv
+
+        ddet_dq = np.zeros(4)
+        for j in range (4):
+            dR_dqi = calculate_dR_d(qp, j)
+            dSigma_dqi = dR_dqi @ Sigma_now @ np.transpose(Rp) + Rp @  Sigma_now @ np.transpose(dR_dqi)
+            dP_dqi = A @ dSigma_dqi
+            ddet_dq[j] = detP @ np.trace( invP @ dP_dqi )
+
+        v_p[0:3] = - ka * Spp @ np.transpose(Jq) @ ddet_dq
+        v_p[3:6] = - ka * np.transpose(Jq) @ ddet_dq
+
+        # Inverse kinematics mapping with siongularity avoidance
+        qdot = np.linalg.pinv(J, 0.1) @ ( v_p )
+
+        # if the key a is pushed
+        if msvcrt.kbhit():
+            if msvcrt.getch() == 'a':
                 Nk = k
-
                 print('Stopping the iteration')
                 break
             # END OF IF
+        # END OF IF
 
-            # set joint speed with acceleration limits
-            rtde_c.speedJ(qdot, 1.0, dt)
+        # set joint speed with acceleration limits
+        rtde_c.speedJ(qdot, 1.0, dt)
 
-            # This is for synchronizing with the UR robot
-            rtde_c.waitPeriod(t_start)
+        # This is for synchronizing with the UR robot
+        rtde_c.waitPeriod(t_start)
 
-        # END OF WHILE -- control loop
-        
-    # END OF WITH
-    
+    # END OF WHILE -- control loop
+
     # Stop velocity control 
     rtde_c.speedStop()
 
