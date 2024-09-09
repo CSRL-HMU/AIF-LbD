@@ -1,38 +1,35 @@
 import numpy as np
-import pyrealsense2 as rs
 import cv2
 import mediapipe as mp
 import threading
 import time
+import pyzed.sl as sl
 import pinhole
-
+from ultralytics import YOLO
+import supervision as sv
+import logging
+import math
 class HandTracker:
     def __init__(self):
         self.frame_width = 1280
         self.frame_height = 720
-        self.pipeline = rs.pipeline()
-        self.config = rs.config()
-        self.config.enable_stream(rs.stream.color, self.frame_width, self.frame_height, rs.format.bgr8, 30)
-        #self.config.enable_stream(rs.stream.depth, 840, 480, rs.format.z16, 30)
-        self.config.enable_stream(rs.stream.depth, self.frame_width, self.frame_height, rs.format.z16, 30)
-        self.profile = self.pipeline.start(self.config)
-        self.align = rs.align(rs.stream.color)
-        self.hole_filling = rs.hole_filling_filter(2)
-        self.spatial_filter = rs.spatial_filter(0.5, 20, 2, 0)  # alpha, delta, magnitude, hole filling
-        self.threshold_filter = rs.threshold_filter(0.2, 0.8)
 
-        # Realsense 415
-        # fx = 930.123
-        # fy = 930.123
-        # cx = 702.00
-        # cy = 375.00
+        self.zed = sl.Camera()
+        init_params = sl.InitParameters()
+        init_params.camera_resolution = sl.RESOLUTION.HD720
+        init_params.depth_mode = sl.DEPTH_MODE.ULTRA
+        init_params.coordinate_units = sl.UNIT.METER
+        self.zed.open(init_params)
 
-        # Realsense 435
-        fx = 870.00
-        fy = 900.00
-        cx = 640.886
-        cy = 363.087
+        self.runtime_params = sl.RuntimeParameters()
+        self.mat = sl.Mat()
+        self.depth = sl.Mat()
 
+        # ZED camera intrinsic parameters 
+        fx = 700.819
+        fy = 700.819
+        cx = 665.465
+        cy = 371.953
 
         size_x = self.frame_width
         size_y = self.frame_height
@@ -41,85 +38,18 @@ class HandTracker:
 
         self.hands = mp.solutions.hands.Hands(
             max_num_hands=2,
-            min_detection_confidence=0.1,
-            min_tracking_confidence=0.1,
-            model_complexity=1
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.5
         )
-        self.fingertips3d = []
-        self.is_tracking = False
+
+        self.yolo = YOLO("yolov8n.pt")  # Load YOLO model
+        self.detections = []
+        self.target_class = "apple"  # Specify the target class
+
         self.tracking_thread = threading.Thread(target=self._tracking_loop)
         self.lock = threading.Lock()
-        self.mp_drawing = mp.solutions.drawing_utils
-        self.show_frame = False          # Toggle Show visualization window
-
-    def _tracking_loop(self):
-        while self.is_tracking:
-            frames = self.pipeline.wait_for_frames()
-            aligned_frames = self.align.process(frames)
-            color_frame = aligned_frames.get_color_frame()
-            aligned_depth_frame = aligned_frames.get_depth_frame()
-
-            if not color_frame or not aligned_depth_frame:
-                continue
-
-            color_image = np.asanyarray(color_frame.get_data())
-            frame_rgb = color_image
-            #depth_image = np.asanyarray(aligned_depth_frame.get_data())
-            results = self.hands.process(frame_rgb)
-
-
-            try:
-                if results.multi_hand_landmarks:
-                    self.fingertips3d = []
-                    for hand_landmarks in results.multi_hand_landmarks:
-                        if self.show_frame:
-                            self.mp_drawing.draw_landmarks(frame_rgb, hand_landmarks)
-
-                        fingertips = [
-                            [int(hand_landmarks.landmark[mp.solutions.hands.HandLandmark.THUMB_TIP].x * self.frame_width),
-                             int(hand_landmarks.landmark[mp.solutions.hands.HandLandmark.THUMB_TIP].y * self.frame_height),
-                             hand_landmarks.landmark[mp.solutions.hands.HandLandmark.THUMB_TIP].z],
-                        ]
-
-                        # print('ff= ', fingertips)
-
-                        try:
-                            depth_value = aligned_depth_frame.get_distance(fingertips[0][0], fingertips[0][1])
-                            if depth_value < 0.1:
-                                continue
-                            depth_intrin = aligned_depth_frame.profile.as_video_stream_profile().intrinsics
-                            # print(f"intr:  {depth_intrin}")
-                            # print(f"type:  {depth_intrin.type()}")
-                            # point_3d = rs.rs2_deproject_pixel_to_point(depth_intrin, [fingertips[0][0], fingertips[0][1]], depth_value)
-                            point_3d = self.ph.back_project([fingertips[0][0], fingertips[0][1]], depth_value)
-                            # point_3d[0] = point_3d[0]-0.014
-                            # point_3d[2] = point_3d[2]  # + tip[2]
-                            # print("point_3d= ", point_3d)
-
-                            with self.lock:
-                                self.fingertips3d.append(point_3d)
-                        except:
-                            continue
-
-                        # print('depth_value= ', depth_value)
-
-
-                else:
-                    with self.lock:
-                        self.fingertips3d = []
-
-            except ValueError as ve:
-                continue
-
-            start_point = (640, 0)   # Coordinates of the starting point
-            end_point = (640, 720)  # Coordinates of the ending point
-
-            cv2.line(frame_rgb, (640, 0), (640, 720), (255, 255, 255), 1)
-            cv2.line(frame_rgb, (0,360), (1280,360), (255, 255, 255), 1)
-
-            if self.show_frame:
-                cv2.imshow("hello", frame_rgb)
-                cv2.waitKey(1)
+        self.is_tracking = False
+        self.fingertips3d = []
 
     def start_tracking(self):
         if not self.is_tracking:
@@ -131,12 +61,131 @@ class HandTracker:
             self.is_tracking = False
             self.tracking_thread.join()
 
+
     def get_fingertips3d(self):
-        return self.fingertips3d
+        with self.lock:
+            return self.fingertips3d
 
+    def detect_objects(self, frame):
+        # Convert frame to BGR format (3 channels) if necessary
+        if frame.shape[2] == 4:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        elif frame.shape[2] == 1:
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        
+        results = self.yolo(frame)
+        self.detections = results  # Get detections
 
-if __name__ == '__main__':
+    def detect_hands(self, frame):
+        image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.hands.process(image_rgb)
+        return results
 
+    def get_depth(self, x, y):
+        err = self.zed.retrieve_measure(self.depth, sl.MEASURE.DEPTH)
+        if err == sl.ERROR_CODE.SUCCESS:
+            depth_value = self.depth.get_value(int(x), int(y))
+            if not np.isnan(depth_value[1]):
+                return depth_value[1]  # depth_value is a tuple (err, depth) where err is the error code for the depth retrieval at (x, y)
+        return None
+
+    def is_index_finger_occluded(self, index_tip, detections):
+        index_x = int(index_tip.x * self.frame_width)
+        index_y = int(index_tip.y * self.frame_height)
+        index_depth = self.get_depth(index_x, index_y)
+
+        if index_depth is None:
+            return False
+
+        for detection in detections:
+            for box in detection.boxes:
+                xyxy = box.xyxy[0].cpu().numpy()  # Bounding box coordinates
+                class_id = int(box.cls[0].cpu().numpy())  # Class ID of the detected object
+                class_name = detection.names[class_id]  # Get class name from YOLO model
+
+                print(f"Detected class: {class_name}, Target class: {self.target_class}")  # Debugging information
+
+                if class_name != self.target_class:
+                    continue
+
+                object_depth = self.get_depth((xyxy[0] + xyxy[2]) // 2, (xyxy[1] + xyxy[3]) // 2)
+
+                if object_depth is None:
+                    continue
+
+                print(f"Index tip: ({index_x}, {index_y}, {index_depth}), Box: ({xyxy[0]}, {xyxy[1]}, {xyxy[2]}, {xyxy[3]}, {object_depth}), Class: {class_name}")
+
+                if xyxy[0] <= index_x <= xyxy[2] and xyxy[1] <= index_y <= xyxy[3] and (index_depth > object_depth or math.isinf(index_depth)):
+                    print(f"Index finger is occluded by a {class_name}!")
+                    return True
+
+                # Additional debugging to understand why the condition might fail
+                print(f"Condition check details: {xyxy[0] <= index_x <= xyxy[2]}, {xyxy[1] <= index_y <= xyxy[3]}, {index_depth >object_depth}")
+                print(f"Bounding Box: ({xyxy[0]}, {xyxy[1]}, {xyxy[2]}, {xyxy[3]}), Index Finger: ({index_x}, {index_y}), Depths: Index {index_depth}, Object {object_depth}")
+
+        return False
+
+    def draw_detections(self, frame):
+        # Draw YOLO detections
+        for detection in self.detections:
+            for box in detection.boxes:
+                xyxy = box.xyxy[0].cpu().numpy()
+                class_id = int(box.cls[0].cpu().numpy())  # Class ID of the detected object
+                class_name = detection.names[class_id]  # Get class name from YOLO model
+                cv2.rectangle(frame, (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3])), (0, 255, 0), 2)
+                cv2.putText(frame, class_name, (int(xyxy[0]), int(xyxy[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36, 255, 12), 2)
+
+    def draw_hands(self, frame, hand_results):
+        # Draw MediaPipe hand landmarks
+        if hand_results.multi_hand_landmarks:
+            for hand_landmarks in hand_results.multi_hand_landmarks:
+                for landmark in hand_landmarks.landmark:
+                    x = int(landmark.x * frame.shape[1])
+                    y = int(landmark.y * frame.shape[0])
+                    cv2.circle(frame, (x, y), 5, (0, 0, 255), -1)
+
+    def _tracking_loop(self):
+        while self.is_tracking:
+            if self.zed.grab(self.runtime_params) == sl.ERROR_CODE.SUCCESS:
+                self.zed.retrieve_image(self.mat, sl.VIEW.LEFT)
+                self.zed.retrieve_measure(self.depth, sl.MEASURE.DEPTH)
+                frame = self.mat.get_data()
+
+                # Perform object detection
+                self.detect_objects(frame)
+
+                # Perform hand detection
+                hand_results = self.detect_hands(frame)
+
+                # Draw detections on frame
+                self.draw_detections(frame)
+                self.draw_hands(frame, hand_results)
+
+                if hand_results.multi_hand_landmarks:
+                    with self.lock:
+                        self.fingertips3d = [
+                            {
+                                "index_tip": hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP],
+                                "depth": self.get_depth(
+                                    int(hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP].x * self.frame_width),
+                                    int(hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP].y * self.frame_height)
+                                )
+                            }
+                            for hand_landmarks in hand_results.multi_hand_landmarks
+                        ]
+                    for hand_landmarks in hand_results.multi_hand_landmarks:
+                        index_tip = hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
+                        if self.is_index_finger_occluded(index_tip, self.detections):
+                            print("!!!!--OCCLUDED!!!!!!!!!")
+
+                cv2.imshow("Frame", frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+        self.zed.close()
+        cv2.destroyAllWindows()
+
+if __name__ == "__main__":
     # Example usage:
     tracker = HandTracker()
     tracker.start_tracking()
@@ -152,7 +201,11 @@ if __name__ == '__main__':
 
         print("Fingertips 3D:", fingertips3d_result)
         #print(f'loop time: {loop_time}')
+        time.sleep(1)
 
     tracker.stop_tracking()
-    pipeline.stop()
+    tracker.zed.close()
     cv2.destroyAllWindows()
+
+####
+
