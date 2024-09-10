@@ -35,40 +35,38 @@ def get_pcf(firstTime, pcf_filtered):
 
     pcf_hat = np.array([0, 0, 0.3])
 
+    isOcc = False
+
     # Get finger data
-    with tracker.lock:
-        fingertips3d_result = tracker.get_fingertips3d()
+
+    fingertips3d_result, isOcc = tracker.get_fingertips3d()
+
+
+    # print(fingertips3d_result)
 
     # if the array is not empty
-    if fingertips3d_result:
+    if fingertips3d_result and fingertips3d_result[0]["depth"]:
 
+        # print(fingertips3d_result)
+        ptemp = np.array([fingertips3d_result[0]["index_tip"].x, fingertips3d_result[0]["index_tip"].y,
+                          fingertips3d_result[0]["depth"]])
+        ptemp[0] = ptemp[0] * tracker.frame_width
+        ptemp[1] = ptemp[1] * tracker.frame_height
+
+        pcf_hat = tracker.ph.back_project(ptemp[0:2], ptemp[2])
         # if this the first time, initialize the state of the filter
         if firstTime:
-            ptemp = np.array([fingertips3d_result[0]["index_tip"].x, fingertips3d_result[0]["index_tip"].y,
-                          fingertips3d_result[0]["depth"]])
-            ptemp[0] = ptemp[0] * tracker.frame_width
-            ptemp[1] = ptemp[1] * tracker.frame_height
-
-            pcf_hat = tracker.ph.back_project(ptemp[0:2], ptemp[2])
-
             pcf_filtered = pcf_hat
-
-        # If the finger is within a cylinder of 0.1m around the center (z-axis)
-        if np.array(fingertips3d_result[0])[0]**2 + np.array(fingertips3d_result[0])[1]**2 < 0.3**2:
-            ptemp = np.array([fingertips3d_result[0]["index_tip"].x, fingertips3d_result[0]["index_tip"].y,
-                              fingertips3d_result[0]["depth"]])
-            ptemp[0] = ptemp[0] * tracker.frame_width
-            ptemp[1] = ptemp[1] * tracker.frame_height
-
-            pcf_hat = tracker.ph.back_project(ptemp[0:2], ptemp[2])
             firstTime = False
-        else:
-            print("[get_pcf] Out of cylinder !!!!!!!!!!!!")
 
         # State equation of the filter with integration
         pcf_filtered = filter_pole * pcf_hat + (1 - filter_pole) * pcf_filtered
-
-    return firstTime, pcf_hat, pcf_filtered
+    # print("test")
+    # print(firstTime)
+    # print(pcf_hat)
+    # print(pcf_filtered)
+    # print(isOcc)
+    return firstTime, pcf_hat, pcf_filtered, isOcc
 
 
 # this returns the robot's pose
@@ -81,8 +79,8 @@ def get_robot_pose(ur, q):
     # get translation
     p0e = np.array(g.t)
 
-    print('R0e=', R0e)
-    print('p0e=', p0e)
+    # print('R0e=', R0e)
+    # print('p0e=', p0e)
 
     # this is the pose of the camera with respec to the end-effector frame
     #Rec = rotZ(pi/2)
@@ -158,23 +156,27 @@ def calculate_dR_d(q, choice):
         return
     q = np.array(q)
     q = q / np.linalg.norm(q)
+
+    dr_d_ = np.zeros((3,3))
+
     if choice == 0:
-        dr_d_ = np.array([[4 * q[0],    -2 * q[3],  2 * q[2]],
-                          [2 * q[3],    4 * q[0],   -2 * q[1]],
-                          [-2 * q[2],   2 * q[1],   4 * q[0]]])
+        dr_d_[0,:] = [4 * q[0],    -2 * q[3],  2 * q[2]]
+        dr_d_[1,:] = [2 * q[3],    4 * q[0],  -2 * q[1]]
+        dr_d_[2,:] = [-2 * q[2],   2 * q[1],   4 * q[0]]
+
     elif choice == 1:
-        dr_d_ = np.array([[4 * q[1],    2 * q[2],   2 * q[3]],
-                          [2 * q[2],    0,          -2 * q[0]], 
-                          [2 * q[3],    2 * q[0],   0       ]])
+        dr_d_[0, :] = [4 * q[1],    2 * q[2],    2 * q[3]]
+        dr_d_[1, :] = [2 * q[2],    0,          -2 * q[0]]
+        dr_d_[2, :] = [2 * q[3],    2 * q[0],    0       ]
 
     elif choice == 2:
-        dr_d_ = np.array([[0,           2 * q[1],   2 * q[0]],
-                          [2 * q[1],    4 * q[2],   2 * q[3]],
-                          [-2 * q[0],   2 * q[3],   0       ]])
+        dr_d_[0, :] = [0,           2 * q[1],   2 * q[0]]
+        dr_d_[1, :] = [2 * q[1],    4 * q[2],   2 * q[3]]
+        dr_d_[2, :] = [-2 * q[0],   2 * q[3],   0       ]
     else:
-        dr_d_ = np.array([[0,           -2 * q[0],  2 * q[1]], 
-                          [2 * q[0],    0,          2 * q[2]],
-                          [2 * q[1],    2 * q[2],   4 * q[3]]])
+        dr_d_[0, :] = [0,           -2 * q[0],  2 * q[1]]
+        dr_d_[1, :] = [2 * q[0],    0,          2 * q[2]]
+        dr_d_[2, :] = [2 * q[1],    2 * q[2],   4 * q[3]]
 
     return dr_d_
 

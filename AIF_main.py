@@ -18,6 +18,8 @@ import threading
 from scipy.spatial.distance import euclidean
 from dmpR3 import *
 import camera_class
+import winsound
+import keyboard
 
 # Declare math pi
 pi = math.pi
@@ -29,6 +31,12 @@ ip_robot = "192.168.1.100"      # for UR5e
 rtde_c = rtde_control.RTDEControlInterface(ip_robot)
 rtde_r = rtde_receive.RTDEReceiveInterface(ip_robot)
 
+keyPflag = False
+
+def changeKeyFlag():
+    keyPflag = True
+    print(keyPflag)
+    return
 
 # # commanded initial configuration for experimenting
 # up UR3e
@@ -75,7 +83,8 @@ ur = rt.DHRobot([
 Rp, pp = get_robot_pose(ur, q0)
 
 # define the center of the scene
-pc = pp + Rp @ 0.4
+pc = pp + Rp @ np.array([0, 0, 0.4])
+pc.shape = (3, 1)
 
 # Control cycle
 dt = 0.002
@@ -99,7 +108,7 @@ ka = 1.0
 firstTime = True
 
 # Initialization of p_hat ... this passes through !!!!!!!! hstack !!!!!
-p_hat = pp + Rp*np.array([[0], [0], [0.3]])
+p_hat = pp + Rp @ np.array([0, 0, 0.3])
 
 # initialize filtered estimation
 pcf_filtered = np.array([[0], [0], [0.3]])
@@ -131,13 +140,13 @@ p_hat.shape = (3, 1)
 
 
 # Initialization of P
-P = np.zeros((3,3*Nk))
+P = np.zeros((3, 3*Nk))
 for k in range(Nk):
     P[0:3, k*3:k*3+3] = 100.0 * np.identity(3)
 
 # Initialization of Q
-Q = P
-Sigma_log = P
+Q = np.array(P)
+Sigma_log = np.array(P)
     
 
 # FOR EACH ITERATION (3 max are considered)
@@ -154,10 +163,14 @@ for i in range(2):
     qp_iter = np.array([[1], [0], [0], [0]])  # QUATERNION
     pp_iter = pp
     pp_iter.shape = (3, 1)
+    pstar_log =  np.array([[0], [0], [0]])
+    x1_log = np.array([[0], [0], [0]])
 
     # dummy initialization of the DMP initial position and target
     pT = p_hat
-    x1 = p_hat
+    x1 = np.zeros(3)
+    x2 = np.zeros(3)
+    x3 = 0
 
     if i == 1:
         # go to a new random configuration
@@ -183,11 +196,13 @@ for i in range(2):
     # Move to the initial configuration
     rtde_c.moveJ(q0d, 0.5, 0.5)
 
+    print('Waiting for hand tracking.')
+
     # Wait for a finger to appear
     while True:
-        with tracker.lock:
-            fingertips3d_result = tracker.get_fingertips3d()
-        # END OF WITH
+
+        fingertips3d_result, isOcc = tracker.get_fingertips3d()
+
 
         time.sleep(0.002)
         # print(fingertips3d_result)
@@ -199,13 +214,16 @@ for i in range(2):
     p_hat.shape = (3, 1)
 
     # after a finger is detected, wait for 3 seconds
-    time.sleep(3)
+    time.sleep(1)
 
-    # make a boop sound for the humnan to start the demonstration
-    beep = lambda x: os.system("echo -n '\a';sleep 0.015;" * x)
-    beep(10)
+    # make a beep sound for the humnan to start the demonstration
+    beep_freq = 1500
+    beep_dur = 1000
+    winsound.Beep(beep_freq, beep_dur)
+    # beep = lambda x: os.system("echo -n '\a';sleep 0.015;" * x)
+    # beep(10)
 
-
+    print('Hand is found!')
 
     # This variable is only for the anti-spike filter
     # p_prev = p_hat
@@ -223,6 +241,11 @@ for i in range(2):
     # initialize time and discrete time
     t = 0
     k = 0
+
+    print('Nk=', Nk)
+
+    # Pass P as the new Q
+    Q = np.array(P)
 
     # this is for accepting commands from keyboard
     # with NonBlockingConsole() as nbc:
@@ -247,13 +270,22 @@ for i in range(2):
 
 
         # get the current estimation of the finger
-        firstTime, pcf_hat, pcf_filtered = get_pcf(firstTime, pcf_filtered)
+        firstTime, pcf_hat, pcf_filtered, isOcc = get_pcf(firstTime, pcf_filtered)
+        # print("pcf_filtered=", pcf_filtered)
+        # print("isOcc=", isOcc)
         p_hat = pp + Rp @ pcf_filtered
-
+        p_hat.shape = (3, 1)
         # initialize DMP state
+
+
+
         if k == 0:
-            x1 = p_hat
+            x1[0] = p_hat[0]
+            x1[1] = p_hat[1]
+            x1[2] = p_hat[2]
+
             dmp_model.set_init_state(x1)
+        #END IF
 
 
         # get the Jacobian
@@ -261,9 +293,13 @@ for i in range(2):
 
         # shape arrays before stacking them
         p_hat.shape = (3, 1)
+
         pp.shape = (3, 1)
+
         Rp.shape = (3, 3)
+
         qp = rot2quat(Rp)
+
         qp.shape = (4, 1)
 
 
@@ -272,6 +308,10 @@ for i in range(2):
 
         # compute Sigma now
         Sigma_now = Rp @ Sigma_0 @ Rp.T
+
+        print("Sigma=", Sigma_now)
+
+
         Sigma_inv = np.linalg.inv(Sigma_now)
 
         # log Sigma
@@ -279,59 +319,86 @@ for i in range(2):
 
         # get modelling uncertainty,i.e. Q
         Q_now = Q[0:3, k*3:k*3+3]
+
+        print("Q=", Q_now)
         Q_inv = np.linalg.inv(Q_now)
 
         # State dot prediction though DMP
         z_dot, p_dot, p_2dot = dmp_model.get_state_dot(x3 , x1, x2)
+
 
         # state integration
         x1 = x1 + p_dot * dt
         x2 = x2 + p_2dot * dt
         x3 = x3 + z_dot * dt
 
+        print("x=", x1, x2, x3)
+
         # Weighted Mean Data Fusion and its covariance
         P[0:3, k*3:k*3+3] = np.linalg.inv( Q_inv + Sigma_inv )
         pstar = P[0:3, k*3:k*3+3] @ ( Q_inv @ x1 + Sigma_inv @ p_hat )
+
+        # pstar[0] = (x1[0] + p_hat[0])/2.0
+        # pstar[1] = (x1[1] + p_hat[1]) / 2.0
+        # pstar[2] = (x1[2] + p_hat[2]) / 2.0
 
         # stack data array
         p_hat_iter = np.hstack((p_hat_iter, np.array(p_hat)))
         qp_iter = np.hstack((qp_iter, qp))
         pp_iter = np.hstack((pp_iter, np.array(pp)))
+        pstar_log = np.hstack((pstar_log, np.array(pstar)))
+        x1_temp = np.array(x1)
+        x1_temp.shape = (3,1)
+
+        x1_log = np.hstack((x1_log, np.array(x1_temp)))
 
         ## ACtive perception signal
         detP = np.linalg.det(P[0:3, k*3:k*3+3])
         invP = np.linalg.inv(P[0:3, k*3:k*3+3])
+
         Jq = getJq(qp)
+
         Spp = skewSymmetric(pc-pp)
 
         A = P[0:3, k*3:k*3+3] @ P[0:3, k*3:k*3+3] @ Sigma_inv @ Sigma_inv
 
         ddet_dq = np.zeros(4)
-        for j in range (4):
+        for j in range(4):
+
             dR_dqi = calculate_dR_d(qp, j)
             dSigma_dqi = dR_dqi @ Sigma_now @ np.transpose(Rp) + Rp @  Sigma_now @ np.transpose(dR_dqi)
             dP_dqi = A @ dSigma_dqi
-            ddet_dq[j] = detP @ np.trace( invP @ dP_dqi )
+            ddet_dq[j] = detP * np.trace( invP @ dP_dqi )
+        # END FOR
+
 
         v_p[0:3] = - ka * Spp @ np.transpose(Jq) @ ddet_dq
         v_p[3:6] = - ka * np.transpose(Jq) @ ddet_dq
-
-        # Inverse kinematics mapping with siongularity avoidance
+        print("v_p= ", v_p)
+        # Inverse kinematics mapping with singularity avoidance
         qdot = np.linalg.pinv(J, 0.1) @ ( v_p )
 
+        #cc = msvcrt.getch()
         # if the key a is pushed
-        if msvcrt.kbhit():
-            if msvcrt.getch() == 'a':
-                Nk = k
-                print('Stopping the iteration')
-                break
+        # if msvcrt.kbhit():
+        #if cc == "a":
+
+
+        if keyboard.is_pressed('a'):
+            Nk = k
+            print("Nk = ",  Nk)
+            print('Stopping the iteration')
+
+            break
             # END OF IF
         # END OF IF
 
         # set joint speed with acceleration limits
+        qdot = np.zeros(6)
         rtde_c.speedJ(qdot, 1.0, dt)
-
-        # This is for synchronizing with the UR robot
+        print("k= ", k)
+        k = k + 1
+        # Thiss is for synchronizing with the UR robot
         rtde_c.waitPeriod(t_start)
 
     # END OF WHILE -- control loop
@@ -340,15 +407,31 @@ for i in range(2):
     rtde_c.speedStop()
 
     # make a sound (beep)
-    beep = lambda x: os.system("echo -n '\a';sleep 0.015;" * x)
-    beep(5)
-   
+    beep_freq = 2000
+    beep_dur = 500
+    winsound.Beep(beep_freq, beep_dur)
+
+
+
     # Re-set the target
     pT = p_hat
 
     # Train the DMP model
     dmp_model.set_goal(pT)
-    dmp_model.train(dt, p_hat_iter, plotPerformance = True)
+    dmp_model.train(dt, p_hat_iter[:, 1:-1], plotPerformance = True)
+
+    fig = plt.figure()
+
+    ax = plt.axes(projection ='3d')
+
+    ax.plot3D(p_hat_iter[0, 1:-1], p_hat_iter[1, 1:-1], p_hat_iter[2, 1:-1])
+    ax.plot3D(x1_log[0, 1:-1], x1_log[1, 1:-1], x1_log[2, 1:-1])
+    ax.plot3D(pstar_log[0, 1:-1], pstar_log[1, 1:-1], pstar_log[2, 1:-1])
+    ax.legend(['phat', 'x1', 'pstar'])
+    ax.set_xlabel('x [m]')
+    ax.set_ylabel('y [m]')
+    ax.set_zlabel('z [m]')
+    plt.show()
 
     # write the log files
     data = {'p_hat_iter': p_hat_iter, 'qp_iter': qp_iter, 'pp_iter': pp_iter, 't': tlog, 'P': P, 'Q': Q, 'Sigma_log':Sigma_log}
@@ -356,6 +439,7 @@ for i in range(2):
 
 
 # END OF (BIG) FOR .... ITERATIONS
+keyboard.unhook_all()
 
 # stop the robot
 rtde_c.speedStop()

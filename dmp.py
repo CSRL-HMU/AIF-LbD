@@ -19,6 +19,8 @@ class dmp:
         self.b = b_in
         self.W = np.zeros(N_in)
 
+        self.isTrained = False
+
         # initial state of the canonical system
         if xType_in == 'linear':
             self.x0 = 0.0
@@ -50,17 +52,22 @@ class dmp:
         # the derivative of the y state 
         ydot = z
 
-        # get the values of kenrel base for this x
-        Psi = self.kb.get_psi_vals_x(x)
+        f = 0.0
+        s = 0.0
 
-        # the forcing term value
-        if self.kernelType == 'sinc':
-            f = self.W @ Psi 
-        else:
-            f = self.W @ Psi / np.sum(Psi)
+        if self.isTrained:
+            # get the values of kenrel base for this x
+            Psi = self.kb.get_psi_vals_x(x)
 
-        # the derivative of the z state 
-        s = 1 - sigmoid(self.kb.ksi_inv(x), 1.0*self.T , 0.05*self.T) 
+            # the forcing term value
+            if self.kernelType == 'sinc':
+                f = self.W @ Psi
+            else:
+                f = self.W @ Psi / np.sum(Psi)
+
+            # the derivative of the z state
+            s = 1 - sigmoid(self.kb.ksi_inv(x), 1.0*self.T , 0.05*self.T)
+
         if not customScale:
             scalingTerm = (self.g - self.y0)
 
@@ -123,6 +130,8 @@ class dmp:
             self.approximate_sincs(t_array, fd_array, Npoints, plotEn)
         else:   # kernel type is 'Gaussian'
             self.approximate_LS_gaussians(t_array, fd_array, Npoints, plotEn)
+
+        self.isTrained = True
         
     # compute the weigths W for sinc interpolation
     def approximate_sincs(self, t, fd, Npoints, plotEn = False):

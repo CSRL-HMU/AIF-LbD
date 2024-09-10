@@ -31,6 +31,8 @@ class HandTracker:
         cx = 632.69
         cy = 379.6325
 
+        self.isOccluded = False
+
         size_x = self.frame_width
         size_y = self.frame_height
 
@@ -44,7 +46,9 @@ class HandTracker:
 
         self.yolo = YOLO("yolov8n.pt")  # Load YOLO model
         self.detections = []
-        self.target_class = "chair"  # Specify the target class
+        #self.target_class = self.yolo.names  # Specify the target class
+        self.target_class =['bicycle','car','motorcycle','airplane','bus','train','truck', 'boat','traffic light','fire hydrant', 'stop sign','parking meter','bench','bird', 'cat','dog','horse','sheep','cow','elephant','bear', 'zebra','giraffe','backpack','umbrella','handbag','tie','suitcase','frisbee','skis','snowboard','sports ball', 'kite','baseball bat','baseball glove', 'skateboard', 'surfboard','tennis racket', 'bottle','wine glass','cup','fork','knife','spoon','bowl','banana','apple','sandwich','orange','broccoli','carrot','hot dog','pizza','donut','cake','chair', 'couch','potted plant', 'bed', 'dining table','toilet','tv','laptop','mouse','remote','keyboard', 'cell phone', 'microwave','oven','toaster','sink','refrigerator','book','clock','vase','scissors','teddy bear','hair drier','toothbrush']
+
 
         self.tracking_thread = threading.Thread(target=self._tracking_loop)
         self.lock = threading.Lock()
@@ -64,7 +68,7 @@ class HandTracker:
 
     def get_fingertips3d(self):
         with self.lock:
-            return self.fingertips3d
+            return self.fingertips3d, self.isOccluded
 
     def detect_objects(self, frame):
         # Convert frame to BGR format (3 channels) if necessary
@@ -105,7 +109,8 @@ class HandTracker:
 
                 #print(f"Detected class: {class_name}, Target class: {self.target_class}")  # Debugging information
 
-                if class_name != self.target_class:
+                #if class_name != self.target_class:
+                if class_name not in self.target_class:
                     continue
 
                 object_depth = self.get_depth((xyxy[0] + xyxy[2]) // 2, (xyxy[1] + xyxy[3]) // 2)
@@ -113,15 +118,15 @@ class HandTracker:
                 if object_depth is None:
                     continue
 
-                print(f"Index tip: ({index_x}, {index_y}, {index_depth}), Box: ({xyxy[0]}, {xyxy[1]}, {xyxy[2]}, {xyxy[3]}, {object_depth}), Class: {class_name}")
+                # print(f"Index tip: ({index_x}, {index_y}, {index_depth}), Box: ({xyxy[0]}, {xyxy[1]}, {xyxy[2]}, {xyxy[3]}, {object_depth}), Class: {class_name}")
 
                 if xyxy[0] <= index_x <= xyxy[2] and xyxy[1] <= index_y <= xyxy[3] and (index_depth > object_depth or math.isinf(index_depth)):
-                    print(f"Index finger is occluded by a {class_name}!")
+                    # print(f"Index finger is occluded by a {class_name}!")
                     return True
 
                 # Additional debugging to understand why the condition might fail
-                print(f"Condition check details: {xyxy[0] <= index_x <= xyxy[2]}, {xyxy[1] <= index_y <= xyxy[3]}, {index_depth >object_depth}")
-                print(f"Bounding Box: ({xyxy[0]}, {xyxy[1]}, {xyxy[2]}, {xyxy[3]}), Index Finger: ({index_x}, {index_y}), Depths: Index {index_depth}, Object {object_depth}")
+                # print(f"Condition check details: {xyxy[0] <= index_x <= xyxy[2]}, {xyxy[1] <= index_y <= xyxy[3]}, {index_depth >object_depth}")
+                # print(f"Bounding Box: ({xyxy[0]}, {xyxy[1]}, {xyxy[2]}, {xyxy[3]}), Index Finger: ({index_x}, {index_y}), Depths: Index {index_depth}, Object {object_depth}")
 
         return False
 
@@ -181,12 +186,14 @@ class HandTracker:
                             }
                             for hand_landmarks in hand_results.multi_hand_landmarks
                         ]
+                    self.isOccluded = False
                     for hand_landmarks in hand_results.multi_hand_landmarks:
                         index_tip = hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
                         if self.is_index_finger_occluded(index_tip, self.detections):
-                            print("!!!!--OCCLUDED!!!!!!!!!")
+                            # print("!!!!--OCCLUDED!!!!!!!!!")
+                            self.isOccluded = True
 
-                cv2.imshow("Frame", frame)
+                # cv2.imshow("Frame", frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 
@@ -225,19 +232,23 @@ if __name__ == "__main__":
     # Add a delay or user input to simulate the program running for some time
     time.sleep(1)
 
+    isOcc = False
+
     while True:
         # print('ttttest1')
         # swith tracker.lock:tart_time = time.time()
 
             # print('Test!')
-        fingertips3d_result = tracker.get_fingertips3d()
+        fingertips3d_result, isOcc = tracker.get_fingertips3d()
         if fingertips3d_result:
             p = np.array([fingertips3d_result[0]["index_tip"].x, fingertips3d_result[0]["index_tip"].y, fingertips3d_result[0]["depth"]])
             p[0] = p[0] * tracker.frame_width
             p[1] = p[1] * tracker.frame_height
 
             pp = tracker.ph.back_project(p[0:2],p[2])
+            print("--------------------")
             print(pp)
+            print(isOcc)
 
         # print('ttttest2')
 

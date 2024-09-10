@@ -265,7 +265,12 @@ def getJq(A):
     epsilon = Q[1:3+1]
     epsilon.shape = (3,1)
 
-    return np.array([ -np.transpose(epsilon)], [eta*np.identity(3)-skewSymmetric(epsilon)] )
+    Jq = np.zeros((4, 3))
+
+    Jq[0, :] = -np.transpose(epsilon)
+    Jq[1:3+1, :] = eta*np.identity(3)-skewSymmetric(epsilon)
+
+    return Jq
 
 
 
