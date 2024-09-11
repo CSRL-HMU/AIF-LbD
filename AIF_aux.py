@@ -180,4 +180,42 @@ def calculate_dR_d(q, choice):
 
     return dr_d_
 
+def getEllipsoidSurf(A, c):
+
+    eigenvalues, eigenvectors = np.linalg.eig(A)
+
+    u, v = np.mgrid[0:2*pi:20j, 0:pi:10j]
+    x = np.cos(u)*np.sin(v)
+    y = np.sin(u)*np.sin(v)
+    z = np.cos(v)
+
+    N = np.size( x[:, 0] )
+    M = np.size( x[0, :] )
+    
+    p = np.zeros(3)
+
+    for i in range(N):
+        for j in range(M):
+
+            # import
+            p[0] = x[i,j]
+            p[1] = y[i,j]
+            p[2] = z[i,j]
+
+            # scale, rotate and translate
+            p_new = c + eigenvectors @ np.diag(eigenvalues) @ p
+
+            # export
+            x[i,j] = p_new[0]
+            y[i,j] = p_new[0]
+            z[i,j] = p_new[0]
+
+        # END FOR j
+    # END FOR i
+
+    return x, y, z
+
+   
+    
+
 
