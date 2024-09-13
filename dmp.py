@@ -86,6 +86,7 @@ class dmp:
         # get the number of points
         Npoints = y_array.size
 
+        self.isTrained = True
 
         # time array
         t_array = np.array(list(range(Npoints)))*dt
@@ -131,7 +132,7 @@ class dmp:
         else:   # kernel type is 'Gaussian'
             self.approximate_LS_gaussians(t_array, fd_array, Npoints, plotEn)
 
-        self.isTrained = True
+
         
     # compute the weigths W for sinc interpolation
     def approximate_sincs(self, t, fd, Npoints, plotEn = False):

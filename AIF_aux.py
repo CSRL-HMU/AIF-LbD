@@ -41,11 +41,15 @@ def get_pcf(firstTime, pcf_filtered):
 
     fingertips3d_result, isOcc = tracker.get_fingertips3d()
 
+    isNan = False
 
     # print(fingertips3d_result)
 
     # if the array is not empty
-    if fingertips3d_result and fingertips3d_result[0]["depth"]:
+    if fingertips3d_result:
+        if not fingertips3d_result[0]["depth"]:
+            fingertips3d_result[0]["depth"] = 0.3
+        #END IF
 
         # print(fingertips3d_result)
         ptemp = np.array([fingertips3d_result[0]["index_tip"].x, fingertips3d_result[0]["index_tip"].y,
@@ -66,7 +70,12 @@ def get_pcf(firstTime, pcf_filtered):
     # print(pcf_hat)
     # print(pcf_filtered)
     # print(isOcc)
-    return firstTime, pcf_hat, pcf_filtered, isOcc
+    if fingertips3d_result[0]["depth"] != fingertips3d_result[0]["depth"]:
+        pcf_hat = pcf_filtered
+        isNan = True
+
+
+    return firstTime, pcf_hat, pcf_filtered, isOcc, isNan
 
 
 # this returns the robot's pose
@@ -85,7 +94,7 @@ def get_robot_pose(ur, q):
     # this is the pose of the camera with respec to the end-effector frame
     #Rec = rotZ(pi/2)
     Rec = np.identity(3)
-    pec = np.array([-0.062, -0.025, 0.043 + 0.032])
+    pec = np.array([-0.06, -0.02, 0.0999])
     # pec = np.array([0.123, 0, 0])
 
 
@@ -180,20 +189,25 @@ def calculate_dR_d(q, choice):
 
     return dr_d_
 
+
 def getEllipsoidSurf(A, c):
 
-    eigenvalues, eigenvectors = np.linalg.eig(A)
+
+    # print('A=',A)
+    eigenvalues, eigenvectors = np.linalg.eigh(A)
+    # print(eigenvalues)
+    # print(eigenvectors)
 
     u, v = np.mgrid[0:2*pi:20j, 0:pi:10j]
     x = np.cos(u)*np.sin(v)
     y = np.sin(u)*np.sin(v)
     z = np.cos(v)
 
-    N = np.size( x[:, 0] )
-    M = np.size( x[0, :] )
+    N = np.size(x[:, 0])
+    M = np.size(x[0, :])
     
     p = np.zeros(3)
-
+    #
     for i in range(N):
         for j in range(M):
 
@@ -203,12 +217,12 @@ def getEllipsoidSurf(A, c):
             p[2] = z[i,j]
 
             # scale, rotate and translate
-            p_new = c + eigenvectors @ np.diag(eigenvalues) @ p
+            p_new = c + 0.5 * eigenvectors @ (np.diag(eigenvalues) @ p)
 
             # export
             x[i,j] = p_new[0]
-            y[i,j] = p_new[0]
-            z[i,j] = p_new[0]
+            y[i,j] = p_new[1]
+            z[i,j] = p_new[2]
 
         # END FOR j
     # END FOR i

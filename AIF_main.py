@@ -31,12 +31,7 @@ ip_robot = "192.168.1.100"      # for UR5e
 rtde_c = rtde_control.RTDEControlInterface(ip_robot)
 rtde_r = rtde_receive.RTDEReceiveInterface(ip_robot)
 
-keyPflag = False
 
-def changeKeyFlag():
-    keyPflag = True
-    print(keyPflag)
-    return
 
 # # commanded initial configuration for experimenting
 # up UR3e
@@ -55,12 +50,20 @@ def changeKeyFlag():
 # q0d = np.array([-0.3801339308368128, -1.9773642025389613, -1.316433310508728, -1.7317115269102992, 2.124098539352417, -0.4773214499102991])
 
 # Fruit exp
-q0d = np.array([1.182332992553711, -2.2384849987425746, -1.71377694606781, -3.0127340755858363, 0.5584464073181152, 2.2159714698791504])
+# q0d = np.array([1.182332992553711, -2.2384849987425746, -1.71377694606781, -3.0127340755858363, 0.5584464073181152, 2.2159714698791504])
 # q0d = np.array([0.7912634611129761, -1.980398794213766, -1.1590644121170044, -1.9489723644652308, 0.9563465714454651, 2.411074638366699 - 1.57])
 
+# AIF exp
+# Initial
+# q0d = [-0.30383807817568, -1.47846573710952, -1.9760072231292725, -1.7141696415343226, 2.122706651687622, -0.9522011915790003]
 
+#control experiment
+q0d = [0.02048109658062458, -1.4097058337977906, -2.217151641845703, -1.0382676881602784, 2.213860034942627, -1.263026539479391]
 # Move to the initial configuration
 rtde_c.moveJ(q0d, 0.5, 0.5)
+
+fx = tracker.ph.fx
+fy = tracker.ph.fy
 
 # Get initial configuration
 q0 = np.array(rtde_r.getActualQ())
@@ -83,7 +86,8 @@ ur = rt.DHRobot([
 Rp, pp = get_robot_pose(ur, q0)
 
 # define the center of the scene
-pc = pp + Rp @ np.array([0, 0, 0.4])
+# pc = pp + Rp @ np.array([0, 0, 0.4])
+pc = np.array([0.27, 0.15, 0])
 pc.shape = (3, 1)
 
 # Control cycle
@@ -98,11 +102,11 @@ t_now = time.time()
 # blocking
 data_id = input('Press any key to start motion recording. This will be stored as the data ID: ')
 
-# Uncomment if you want to free drive[-0.7225549856769007, -1.5372941692224522, -2.1203153133392334, -0.1600521367839356, 1.5096690654754639, 3.262672185897827]
+# Uncomment if you want to free drive
 # rtde_c.freedriveMode()
 
 # Control gains
-ka = 1.0
+ka = 30000.0
 
 # This is a flag for indicating the first iteration
 firstTime = True
@@ -111,7 +115,7 @@ firstTime = True
 p_hat = pp + Rp @ np.array([0, 0, 0.3])
 
 # initialize filtered estimation
-pcf_filtered = np.array([[0], [0], [0.3]])
+pcf_filtered = np.array([0, 0, 0.3])
 
 
 # Initialize logging
@@ -119,18 +123,19 @@ plog = p_hat
 tlog = np.array([t])
 
 # Set the covariance matrix of the camera
-sigma_1 = 0.001
-sigma_2 = 0.05
-Sigma_0 = np.identity(3)
-Sigma_0[0, 0] = sigma_1
-Sigma_0[1, 1] = sigma_1
-Sigma_0[2, 2] = sigma_2
+sigma_1 = 40.0
+sigma_2 = 40.0
+sigma_3 = 0.3
+
+
+depth_calibration_param = -0.005
+
 
 # Total discrete time is initialy set to a very large number (we don't know this before the first iteration)
 Nk = 100000  # T = Nk * dt (for Nk=100000 -> T=200s)
 
 # Number of DMP kernels
-M = 40
+M = 100
 
 
 # this is the initial pf 
@@ -138,19 +143,19 @@ pp.shape = (3, 1)
 p_hat.shape = (3, 1)
 
 
-
 # Initialization of P
 P = np.zeros((3, 3*Nk))
 for k in range(Nk):
-    P[0:3, k*3:k*3+3] = 100.0 * np.identity(3)
+    P[0:3, k*3:k*3+3] = 10000.0 * np.identity(3)
 
 # Initialization of Q
 Q = np.array(P)
 Sigma_log = np.array(P)
-    
+
+dmp_model = dmpR3(M, 20)
 
 # FOR EACH ITERATION (3 max are considered)
-for i in range(2):
+for i in range(3):
 
     # get the robot's state
     Rp, pp = get_robot_pose(ur, q0)
@@ -163,14 +168,10 @@ for i in range(2):
     qp_iter = np.array([[1], [0], [0], [0]])  # QUATERNION
     pp_iter = pp
     pp_iter.shape = (3, 1)
-    pstar_log =  np.array([[0], [0], [0]])
+    pstar_log = np.array([[0], [0], [0]])
     x1_log = np.array([[0], [0], [0]])
 
-    # dummy initialization of the DMP initial position and target
-    pT = p_hat
-    x1 = np.zeros(3)
-    x2 = np.zeros(3)
-    x3 = 0
+
 
     if i == 1:
         # go to a new random configuration
@@ -186,12 +187,35 @@ for i in range(2):
         #     [0.7912634611129761, -1.980398794213766, -1.1590644121170044, -1.9489723644652308, 0.9563465714454651, 2.411074638366699 - 1.57])
 
         # exp fruit
-        q0d = np.array([1.2330601215362549, -1.2422520977309723, -1.6271378993988037, -2.3346992931761683, 0.3470206558704376,
-             0.5055640339851379])
+        # q0d = np.array([1.2330601215362549, -1.2422520977309723, -1.6271378993988037, -2.3346992931761683, 0.3470206558704376,
+        #      0.5055640339851379])
+
+        # AIF exp
+        # random
+        # q0d = [1.1167820692062378, -1.3569369328073044, -1.7153658866882324, -1.8449112377562464, 1.3861088752746582, 0.8647269606590271]
+
+        #near orthogonal (for testing) ~30cm from the finger
+        # q0d = [0.9858736395835876, -1.4445417833379288, -1.8655898571014404, -1.713369985620016, 1.4113799333572388, 0.8625016212463379]
+
+        # for testing control
+        # q0d =  [0.48205387592315674, -1.1585588318160553, -1.9691475629806519, -1.6409017048277796, 1.8995541334152222, 0.21441252529621124]
+        # q0d = [1.7740888595581055, -0.9471536439708252, -1.8968122005462646, -2.1335650883116664, 1.0458874702453613, 0.5070753693580627]
+        # q0d = [1.387945532798767, -1.5586947363666077, -2.0203726291656494, -1.808474679986471, 1.1164849996566772, 2.0572235584259033]
+
+        # previous good
+        # q0d = [0.45207467675209045, -1.2947058540633698, -2.1917667388916016, -1.0930940073779603, 1.882698893547058, -1.516597096120016]
+
+        q0d = [0.35332682728767395, -1.2308420699885865, -1.8594352006912231, -1.5463937253556033, 1.979645013809204, -1.5163329283343714]
+        Q_now = Q[0:3, 0:3]
+
+    # END OF IF
+
+    if i == 2:
+        q0d = [1.7740888595581055, -0.9471536439708252, -1.8968122005462646, -2.1335650883116664, 1.0458874702453613,
+               0.5070753693580627]
 
         Q_now = Q[0:3, 0:3]
     # END OF IF
-
 
     # Move to the initial configuration
     rtde_c.moveJ(q0d, 0.5, 0.5)
@@ -214,7 +238,7 @@ for i in range(2):
     p_hat.shape = (3, 1)
 
     # after a finger is detected, wait for 3 seconds
-    time.sleep(1)
+    time.sleep(3)
 
     # make a beep sound for the humnan to start the demonstration
     beep_freq = 1500
@@ -234,8 +258,16 @@ for i in range(2):
 
     # DMP initialization, with many default selections, e.g. Gaussian kernel, Linear Canonical system, alpha, beta ... 
     # M is the number of Kernels
-    dmp_model = dmpR3(M, 20)
-    dmp_model.set_goal(pT)
+    # dummy initialization of the DMP initial position and target
+    # pT = p_hat
+    x1 = np.zeros(3)
+    if dmp_model.dmp_array[0].isTrained:
+        x1 = dmp_model.p0
+    else:
+        dmp_model.set_goal(p_hat)  ## the initial trained the it is initialized in the loop
+
+    x2 = np.zeros(3)
+    x3 = 0
 
 
     # initialize time and discrete time
@@ -247,8 +279,10 @@ for i in range(2):
     # Pass P as the new Q
     Q = np.array(P)
 
-    # this is for accepting commands from keyboard
-    # with NonBlockingConsole() as nbc:
+
+
+    # Uncomment if you want to free drive
+    # rtde_c.freedriveMode()
 
     # while the reference index is less that the size of the reference time array
     while k < Nk:     # CONTROL LOOP
@@ -270,19 +304,26 @@ for i in range(2):
 
 
         # get the current estimation of the finger
-        firstTime, pcf_hat, pcf_filtered, isOcc = get_pcf(firstTime, pcf_filtered)
+        firstTime, pcf_hat, pcf_filtered, isOcc, isNan = get_pcf(firstTime, pcf_filtered)
         # print("pcf_filtered=", pcf_filtered)
         # print("isOcc=", isOcc)
-        p_hat = pp + Rp @ pcf_filtered
+        # print("pp=", pp)
+        # print("Rp=", Rp)
+        # print("pcf_filtered=", pcf_filtered)
+        pcf_hat[2] = pcf_hat[2] + depth_calibration_param
+        p_hat = pp + Rp @ pcf_hat
+        print("p_hat=", p_hat)
         p_hat.shape = (3, 1)
         # initialize DMP state
 
+        p_hat_iter = np.hstack((p_hat_iter, np.array(p_hat)))
 
 
-        if k == 0:
+        if (not dmp_model.dmp_array[0].isTrained) and (k==0):
             x1[0] = p_hat[0]
             x1[1] = p_hat[1]
             x1[2] = p_hat[2]
+
 
             dmp_model.set_init_state(x1)
         #END IF
@@ -292,11 +333,11 @@ for i in range(2):
         J = get_jacobian(ur, q)
 
         # shape arrays before stacking them
-        p_hat.shape = (3, 1)
+        #p_hat.shape = (3, 1)
 
         pp.shape = (3, 1)
 
-        Rp.shape = (3, 3)
+        # Rp.shape = (3, 3)
 
         qp = rot2quat(Rp)
 
@@ -307,9 +348,16 @@ for i in range(2):
         tlog = np.vstack((tlog, t))
 
         # compute Sigma now
-        Sigma_now = Rp @ Sigma_0 @ Rp.T
 
-        print("Sigma=", Sigma_now)
+        sigma_x_sq = pow(sigma_1/fx,2)*pow(sigma_3,2)+(pow(pcf_hat[0]/pcf_hat[2],2))*pow(sigma_3,2)+pow(pcf_hat[2]*sigma_1/fx,2)
+        sigma_y_sq = pow(sigma_2/fy,2)*pow(sigma_3,2)+(pow(pcf_hat[1]/pcf_hat[2],2))*pow(sigma_3,2)+pow(pcf_hat[2]*sigma_2/fy,2)
+        sigma_d_sq = pow(sigma_3,2)
+        Sigma_1 = np.diag(np.array([sigma_x_sq, sigma_y_sq, sigma_d_sq]))
+        if isOcc:
+            print("Occluded! ---------------------------------------")
+            Sigma_1 = 2 * Sigma_1
+        Sigma_now = Rp  @ Sigma_1  @ np.transpose(Rp)
+
 
 
         Sigma_inv = np.linalg.inv(Sigma_now)
@@ -317,10 +365,13 @@ for i in range(2):
         # log Sigma
         Sigma_log[0:3, k*3:k*3+3] = Sigma_now
 
+
+
         # get modelling uncertainty,i.e. Q
         Q_now = Q[0:3, k*3:k*3+3]
 
-        print("Q=", Q_now)
+
+
         Q_inv = np.linalg.inv(Q_now)
 
         # State dot prediction though DMP
@@ -332,21 +383,47 @@ for i in range(2):
         x2 = x2 + p_2dot * dt
         x3 = x3 + z_dot * dt
 
-        print("x=", x1, x2, x3)
 
         # Weighted Mean Data Fusion and its covariance
         P[0:3, k*3:k*3+3] = np.linalg.inv( Q_inv + Sigma_inv )
-        pstar = P[0:3, k*3:k*3+3] @ ( Q_inv @ x1 + Sigma_inv @ p_hat )
 
-        # pstar[0] = (x1[0] + p_hat[0])/2.0
-        # pstar[1] = (x1[1] + p_hat[1]) / 2.0
-        # pstar[2] = (x1[2] + p_hat[2]) / 2.0
+        #
+        # ax2 = plt.axes(projection='3d')
+        # Px, Py, Pz = getEllipsoidSurf(P[0:3, k*3:k*3+3], np.array([0, 0, 0]))
+        # ax2.plot_surface(Px, Py, Pz, alpha=1.0, color='k')
+        #
+        # if i>0:
+        #     Qx, Qy, Qz = getEllipsoidSurf(Q_now, np.array([0, 0, 0]))
+        #     ax2.plot_surface(Qx, Qy, Qz, alpha=0.1, color='r')
+        # # print('Sigma_now inv=', np.linalg.inv(Sigma_now))
+        # Sigx, Sigy, Sigz = getEllipsoidSurf(Sigma_now, np.array([0, 0, 0]))
+        # ax2.plot_surface(Sigx, Sigy, Sigz, alpha=0.1, color='b')
+        #
+        #
+        # ax2.set_xlabel('x [m]')
+        # ax2.set_ylabel('y [m]')
+        # ax2.set_zlabel('z [m]')
+        # ax2.set_aspect('equal', adjustable='box')
+        # # plt.show()
+        # plt.draw()
+        # plt.pause(0.0001)
+        # plt.clf()
+
+        p_hat_temp = np.array(p_hat)
+        p_hat_temp.shape = (1, 3)
+        p_hat_temp = p_hat_temp[0]
+
+
+        # ESTIMATION !!
+        pstar = np.linalg.inv( Q_inv + Sigma_inv ) @ ( (Q_inv @ x1) + (Sigma_inv @ p_hat_temp) )
+
+
 
         # stack data array
-        p_hat_iter = np.hstack((p_hat_iter, np.array(p_hat)))
+
         qp_iter = np.hstack((qp_iter, qp))
         pp_iter = np.hstack((pp_iter, np.array(pp)))
-        pstar_log = np.hstack((pstar_log, np.array(pstar)))
+        pstar_log = np.hstack((pstar_log, np.array([ [pstar[0]], [pstar[1]], [pstar[2]] ])))
         x1_temp = np.array(x1)
         x1_temp.shape = (3,1)
 
@@ -366,27 +443,26 @@ for i in range(2):
         for j in range(4):
 
             dR_dqi = calculate_dR_d(qp, j)
-            dSigma_dqi = dR_dqi @ Sigma_now @ np.transpose(Rp) + Rp @  Sigma_now @ np.transpose(dR_dqi)
+            dSigma_dqi = dR_dqi @ Sigma_1  @ np.transpose(Rp) + Rp  @ Sigma_1  @ np.transpose(dR_dqi)
             dP_dqi = A @ dSigma_dqi
             ddet_dq[j] = detP * np.trace( invP @ dP_dqi )
         # END FOR
 
-
-        v_p[0:3] = - ka * Spp @ np.transpose(Jq) @ ddet_dq
+        v_p = np.zeros(6)
         v_p[3:6] = - ka * np.transpose(Jq) @ ddet_dq
+        v_p[0:3] = Spp @ v_p[3:6]
+        if pp[2]<0.20:
+            v_p[2]=0.0
+
         print("v_p= ", v_p)
         # Inverse kinematics mapping with singularity avoidance
         qdot = np.linalg.pinv(J, 0.1) @ ( v_p )
 
-        #cc = msvcrt.getch()
-        # if the key a is pushed
-        # if msvcrt.kbhit():
-        #if cc == "a":
 
 
+        # Break if keyboard a is pressed
         if keyboard.is_pressed('a'):
-            Nk = k
-            print("Nk = ",  Nk)
+
             print('Stopping the iteration')
 
             break
@@ -394,17 +470,29 @@ for i in range(2):
         # END OF IF
 
         # set joint speed with acceleration limits
-        qdot = np.zeros(6)
+        # qdot = np.zeros(6)
+        # =========================================
         rtde_c.speedJ(qdot, 1.0, dt)
-        print("k= ", k)
+
+        # print(Q[0:3, k * 3:k * 3 + 3])
+
+        # print("k= ", k)
         k = k + 1
-        # Thiss is for synchronizing with the UR robot
+
+
+        # This is for synchronizing with the UR robot
         rtde_c.waitPeriod(t_start)
 
     # END OF WHILE -- control loop
 
+
+
     # Stop velocity control 
     rtde_c.speedStop()
+
+    # Nk is the last index k
+    Nk = k
+    print("Nk = ", Nk)
 
     # make a sound (beep)
     beep_freq = 2000
@@ -413,17 +501,12 @@ for i in range(2):
 
 
 
-    # Re-set the target
-    pT = p_hat
-
     # Train the DMP model
-    dmp_model.set_goal(pT)
     dmp_model.train(dt, p_hat_iter[:, 1:-1], plotPerformance = True)
 
+    # Plots !-----------------
     fig = plt.figure()
-
     ax = plt.axes(projection ='3d')
-
     ax.plot3D(p_hat_iter[0, 1:-1], p_hat_iter[1, 1:-1], p_hat_iter[2, 1:-1])
     ax.plot3D(x1_log[0, 1:-1], x1_log[1, 1:-1], x1_log[2, 1:-1])
     ax.plot3D(pstar_log[0, 1:-1], pstar_log[1, 1:-1], pstar_log[2, 1:-1])
@@ -431,10 +514,48 @@ for i in range(2):
     ax.set_xlabel('x [m]')
     ax.set_ylabel('y [m]')
     ax.set_zlabel('z [m]')
+    ax.set_aspect('equal', adjustable='box')
+    plt.show()
+
+    # plot Ellipsoids -------------
+    ax3 = plt.axes(projection='3d')
+    k_test = Nk-1
+    kk = 1
+    while kk<Nk:
+
+        cent = pstar_log[:,kk]
+        cent.shape = (1,3)
+        cent = cent[0]
+        print(cent)
+        Px, Py, Pz = getEllipsoidSurf(P[0:3, kk * 3:kk * 3 + 3], cent)
+        ax3.plot_surface(Px, Py, Pz, alpha=1.0, color='k')
+
+        if i > 0:
+            Qx, Qy, Qz = getEllipsoidSurf(Q[0:3, kk * 3:kk * 3 + 3], cent )
+            ax3.plot_surface(Qx, Qy, Qz, alpha=0.1, color='r')
+        # print('Sigma_now inv=', np.linalg.inv(Sigma_now))
+        Sigx, Sigy, Sigz = getEllipsoidSurf(Sigma_log[0:3, kk * 3:kk * 3 + 3], cent )
+        ax3.plot_surface(Sigx, Sigy, Sigz, alpha=0.1, color='b')
+
+        kk = kk + 500
+
+    ax3.set_xlabel('x [m]')
+    ax3.set_ylabel('y [m]')
+    ax3.set_zlabel('z [m]')
+    ax3.set_aspect('equal', adjustable='box')
+    plt.show()
+    # plt.draw()
+    # plt.pause(0.0001)
+    # plt.clf()
+
+    ax3.set_xlabel('x [m]')
+    ax3.set_ylabel('y [m]')
+    ax3.set_zlabel('z [m]')
+    ax3.set_aspect('equal', adjustable='box')
     plt.show()
 
     # write the log files
-    data = {'p_hat_iter': p_hat_iter, 'qp_iter': qp_iter, 'pp_iter': pp_iter, 't': tlog, 'P': P, 'Q': Q, 'Sigma_log':Sigma_log}
+    data = {'phat': p_hat_iter, 'qp': qp_iter, 'pp': pp_iter, 't': tlog, 'P': P, 'Q': Q, 'Sigma':Sigma_log, 'pstar': pstar_log, 'x1': x1_log}
     scio.savemat('Logging_' + str(data_id) + '_' + str(i) + '.mat', data)
 
 

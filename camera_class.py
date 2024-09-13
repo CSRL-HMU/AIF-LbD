@@ -16,9 +16,11 @@ class HandTracker:
 
         self.zed = sl.Camera()
         init_params = sl.InitParameters()
+        runtime_params = sl.RuntimeParameters()
         init_params.camera_resolution = sl.RESOLUTION.HD720
         init_params.depth_mode = sl.DEPTH_MODE.ULTRA
         init_params.coordinate_units = sl.UNIT.METER
+        init_params.depth_minimum_distance = 0.2
         self.zed.open(init_params)
 
         self.runtime_params = sl.RuntimeParameters()
@@ -193,7 +195,8 @@ class HandTracker:
                             # print("!!!!--OCCLUDED!!!!!!!!!")
                             self.isOccluded = True
 
-                # cv2.imshow("Frame", frame)
+                cv2.imshow("Frame", frame)
+                # cv2.imwrite('./image1.png', frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 

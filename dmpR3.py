@@ -32,6 +32,7 @@ class dmpR3:
 
         # translation target 
         self.p_target = p_array[:,-1]
+        self.p0 = p_array[:, 0]
 
         # train the DMP in each axis
         for i in range(3):
@@ -48,7 +49,7 @@ class dmpR3:
 
         # for position and orientation
         for i in range(3):
-            x_out_dot, p_out_dot[i], p_out_2dot[i] = self.dmp_array[i].get_state_dot( x, p[i], pdot[i]) 
+            x_out_dot, p_out_dot[i], p_out_2dot[i] = self.dmp_array[i].get_state_dot( x, p[i], pdot[i], customScale=False, scalingTerm=1.0)
            
         # return state dot
         return x_out_dot, p_out_dot, p_out_2dot
