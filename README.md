@@ -17,7 +17,7 @@ This package implements an active perception controller for minimizing the uncer
 A UR5e robot is considered with a ZED 2 camera attached to its end-effector.
 
 <p align="center">
-  <img src="./algoorithm.jpg" height="175" />
+  <img src="./algorithm.jpg" height="175" />
 </p>
 
 ## 1. Usage
