@@ -11,11 +11,14 @@ https://carpos.hmu.gr/
   <img src="./doc/elidek_logo.png" height="175" />
 </p>
 
+
 This package implements an active perception controller for minimizing the uncertainty during visual observations of an action performed by a human hand. 
 
 A UR5e robot is considered with a ZED 2 camera attached to its end-effector.
 
-
+<p align="center">
+  <img src="./algoorithm.jpg" height="175" />
+</p>
 
 ## 1. Usage
 
